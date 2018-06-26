@@ -1,5 +1,10 @@
+import os
+
 import numpy as np
 import tensorflow as tf
+
+from skimage.io import imsave
+from tensorflow.contrib.tensorboard.plugins import projector
 
 # TensorFlow helper functions
 
@@ -131,3 +136,41 @@ def _fc_with_init(x, out_dim, bias=True, init_w=None, init_b=None, trainable=Tru
             fc = tf.nn.bias_add(fc, b)
 
     return fc
+
+def save_embedding_projector(projector_dir, embeddings, labels, images_sprites, image_dim):
+    metadata_fname = 'metadata.tsv'
+    image_fname = 'sprite.png'
+    ckpt_fname = 'model.ckpt'
+
+    if not os.path.exists(projector_dir):
+        os.makedirs(projector_dir)
+
+    # Save labels
+    with open(os.path.join(projector_dir, metadata_fname), 'w') as fd:
+        fd.write(''.join(['%d\n' % l for l in labels]))
+
+    # Save images
+    imsave(os.path.join(projector_dir, image_fname), images_sprites)
+
+    # Save embeddings inside new graph scope
+    with tf.Graph().as_default() as g:
+        sess = tf.InteractiveSession(graph=g)
+
+        embed_var = tf.Variable(embeddings, trainable=False, name='embedding')
+        sess.run(tf.initialize_variables([embed_var]))
+
+        writer = tf.summary.FileWriter(projector_dir, sess.graph)
+
+        # Projector
+        config = projector.ProjectorConfig()
+        embed = config.embeddings.add()
+        embed.tensor_name = 'embedding:0'
+        embed.metadata_path = metadata_fname
+        embed.sprite.image_path = image_fname
+        embed.sprite.single_image_dim.extend(image_dim)
+        projector.visualize_embeddings(writer, config)
+
+        saver = tf.train.Saver([embed_var])
+        saver.save(sess, os.path.join(projector_dir, ckpt_fname), global_step=0)
+
+        sess.close()

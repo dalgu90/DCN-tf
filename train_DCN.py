@@ -6,11 +6,13 @@ import time
 from six.moves import xrange
 
 import tensorflow as tf
+import tensorflow.examples.tutorials.mnist.input_data as input_data
+from tensorflow.contrib.tensorboard.plugins import projector
 import numpy as np
 import pandas as pd
 import sklearn.metrics
+from skimage.io import imsave
 
-import tensorflow.examples.tutorials.mnist.input_data as input_data
 from data import cifar10, cifar100, mnist
 from networks import DCN_fc, DCN_conv
 
@@ -277,56 +279,28 @@ def train():
                 checkpoint_path = os.path.join(FLAGS.train_dir, 'model.ckpt')
                 saver.save(sess, checkpoint_path, global_step=step, write_meta_graph=False)
 
-        # After training, collect embedding vectors and images of the test data
-        from skimage.io import imsave
-        from tensorflow.contrib.tensorboard.plugins import projector
-        num_embed_batch = 4 * 4
-        print('Making embedding of %d test images' % (num_embed_batch * FLAGS.batch_size))
-        embed_images, embed_labels, embed_features = np.zeros((4*10*28, 4*10*28, 4), dtype=np.uint8), [], []
-        cnt = 0
-        for i in range(num_embed_batch):
-            features_val, images_val, labels_val = sess.run([network_test._features, test_images, test_labels],
-                                                            feed_dict={network_test.is_train:False})
-            for j in range(FLAGS.batch_size):
-                r, c = cnt % (4*10), cnt // (4*10)
-                embed_images[c*28:(c+1)*28,r*28:(r+1)*28] = \
-                    np.concatenate([255-np.tile(255*images_val[j], [1, 1, 3]), np.ones([28, 28, 1])*255], axis=2)
-                cnt += 1
-            embed_features.append(features_val)
-            embed_labels.append(labels_val)
+            if (step + 1) == 30000 or (step + 1) == FLAGS.max_steps:
+                # After training, collect embedding vectors and images of the test data
+                num_embed_batch = 4 * 4
+                print('Making embedding of %d test images' % (num_embed_batch * FLAGS.batch_size))
+                embed_images, embed_labels, embed_features = np.zeros((4*10*28, 4*10*28, 4), dtype=np.uint8), [], []
+                cnt = 0
+                for i in range(num_embed_batch):
+                    features_val, images_val, labels_val = sess.run([network_test._features, test_images, test_labels],
+                                                                    feed_dict={network_test.is_train:False})
+                    for j in range(FLAGS.batch_size):
+                        r, c = cnt % (4*10), cnt // (4*10)
+                        embed_images[c*28:(c+1)*28,r*28:(r+1)*28] = \
+                            np.concatenate([255-np.tile(255*images_val[j], [1, 1, 3]), np.ones([28, 28, 1])*255], axis=2)
+                        cnt += 1
+                    embed_features.append(features_val)
+                    embed_labels.append(labels_val)
+                embed_features = np.concatenate(embed_features, axis=0)
+                embed_labels = np.concatenate(embed_labels, axis=0)
 
-        # Close session to create new session for projector
-        sess.close()
-
-    # Save embedding
-    with tf.Graph().as_default():
-        projector_dir = os.path.join(FLAGS.train_dir, 'projector')
-        os.makedirs(projector_dir)
-        sess2 = tf.InteractiveSession()
-
-        imsave(projector_dir + '/sprite.png', embed_images)
-
-        embed_features = np.concatenate(embed_features, axis=0)
-        embed_var = tf.Variable(embed_features, trainable=False, name='embedding')
-        sess2.run(tf.initialize_variables([embed_var]))
-
-        embed_labels = np.concatenate(embed_labels, axis=0)
-        with open(projector_dir + '/metadata.tsv', 'w') as f:
-            for l in embed_labels:
-                f.write('{}\n'.format(l))
-
-        writer = tf.summary.FileWriter(projector_dir, sess2.graph)
-
-        config = projector.ProjectorConfig()
-        embed= config.embeddings.add()
-        embed.tensor_name = 'embedding:0'
-        embed.metadata_path = os.path.join('metadata.tsv')
-        embed.sprite.image_path = os.path.join('sprite.png')
-        embed.sprite.single_image_dim.extend([28, 28])
-        projector.visualize_embeddings(writer, config)
-
-        saver = tf.train.Saver(tf.global_variables(), max_to_keep=10000)
-        saver.save(sess2, projector_dir + '/a_model.ckpt', global_step=step)
+                import utils
+                projector_dir = os.path.join(FLAGS.train_dir, 'projector_%d'%step)
+                utils.save_embedding_projector(projector_dir, embed_features, embed_labels, embed_images, [28, 28])
 
 def main(argv=None):  # pylint: disable=unused-argument
   train()
